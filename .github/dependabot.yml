@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /website
+    # Dependency maintenance is handled by the dependency audit workflow.
+    schedule:
+      interval: yearly
+    open-pull-requests-limit: 0
+    # Suppress update PRs, including security updates, for this project only.
+    # Alert suppression requires the manifest-based rule documented in
+    # https://github.com/hydra-ecosystem/github-actions/blob/3c1e84034cce8eafd214171a941a1938d4a78fe9/docusaurus/maintenance.md.
+    ignore:
+      - dependency-name: "*"

@@ -1,0 +1,108 @@
+import os
+from typing import Tuple
+
+import nox
+from nox import Session
+
+DEFAULT_PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+PYTHON_VERSIONS = os.environ.get(
+    "NOX_PYTHON_VERSIONS", ",".join(DEFAULT_PYTHON_VERSIONS)
+).split(",")
+
+nox.options.error_on_missing_interpreters = True
+
+
+def deps(
+    session: Session, editable_install: bool, requirements: str = "requirements/dev.txt"
+) -> None:
+    session.install("--upgrade", "setuptools", "pip")
+    extra_flags = ["-e"] if editable_install else []
+    session.install("-r", requirements, *extra_flags, ".", silent=True)
+
+
+@nox.session(python=PYTHON_VERSIONS)  # type: ignore
+def omegaconf(session: Session) -> None:
+    deps(session, editable_install=False)  # ensure we test the regular install
+    session.run("pytest")
+
+
+@nox.session(python=PYTHON_VERSIONS)  # type: ignore
+def benchmark(session: Session) -> None:
+    deps(session, editable_install=True)
+    session.run("pytest", "benchmark/benchmark.py")
+
+
+@nox.session  # type: ignore
+def docs(session: Session) -> None:
+    deps(session, False, "requirements/docs.txt")
+    session.chdir("legacy/rtd")
+    session.run("sphinx-build", "-W", "-b", "html", "source", "build")
+    session.install("pytest")  # required for `sphinx-build -b doctest`:
+    session.run("sphinx-build", "-W", "-b", "doctest", "source", "build")
+
+
+@nox.session(python=["3.10"])  # type: ignore
+def coverage(session: Session) -> None:
+    # For coverage, we must use the editable installation because
+    # `coverage run -m pytest` prepends `sys.path` with "." (the current
+    # folder), so that the local code will be used in tests even if we set
+    # `editable_install=False`. This would cause problems due to potentially
+    # missing the generated grammar files.
+    # Note: Coverage only runs on Python 3.10 to avoid running it on every CI job
+    deps(session, editable_install=True)
+    session.run("coverage", "erase")
+    session.run("coverage", "run", "--append", "-m", "pytest", silent=True)
+    session.run("coverage", "report", "--fail-under=100")
+    session.run("coverage", "xml", "-o", "coverage.xml")
+
+    session.run("coverage", "erase")
+
+
+def version_string_to_tuple(version: str) -> Tuple[int, ...]:
+    return tuple(map(int, version.split(".")))
+
+
+@nox.session(python=["3.10"])  # type: ignore
+def fix(session: Session) -> None:
+    """Auto-fix formatting and import sorting issues with Ruff."""
+    deps(session, editable_install=True)
+    session.run("ruff", "check", ".", "--fix")
+    session.run("ruff", "format", ".")
+
+
+@nox.session(python=["3.10"])  # type: ignore
+def lint(session: Session) -> None:
+    # Note: Linting only runs on Python 3.10 to avoid running it on every CI job
+    deps(session, editable_install=True)
+    session.run("pyrefly", "check", silent=True)
+    session.run("pyrefly", "coverage", "check", "--public-only", silent=True)
+    session.run("ruff", "check", ".", silent=True)
+    session.run("ruff", "format", "--check", ".", silent=True)
+
+
+@nox.session(python=PYTHON_VERSIONS)  # type: ignore
+def test_jupyter_notebook(session: Session) -> None:
+    if session.python not in DEFAULT_PYTHON_VERSIONS:
+        session.skip(
+            "Not testing Jupyter notebook on Python {}, supports [{}]".format(
+                session.python, ",".join(DEFAULT_PYTHON_VERSIONS)
+            )
+        )
+    deps(session, editable_install=False)
+    session.install("jupyter", "nbval")
+    extra_flags = ["-Wignore::ResourceWarning"]
+    extra_flags.extend(
+        [
+            # Ignore deprecation warnings raised by jupyter_client in Python 3.10
+            # https://github.com/jupyter/jupyter_client/issues/713
+            "-Wdefault:There is no current event loop:DeprecationWarning",
+        ]
+    )
+    session.run(
+        "pytest",
+        "--nbval",
+        "legacy/rtd/notebook/Tutorial.ipynb",
+        *extra_flags,
+        silent=True,
+    )

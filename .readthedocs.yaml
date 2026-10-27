@@ -1,0 +1,32 @@
+# .readthedocs.yml
+# Read the Docs configuration file
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+
+# Required
+version: 2
+
+# Build the legacy documentation with Sphinx
+sphinx:
+  configuration: legacy/rtd/source/conf.py
+
+
+# Optionally build your docs in additional formats such as PDF and ePub
+formats:
+  - pdf
+
+build:
+  os: ubuntu-22.04
+  tools:
+    python: "3.10"
+  jobs:
+    post_system_dependencies:
+      - asdf plugin add java
+      - asdf install java latest:adoptopenjdk-11
+      - asdf global java latest:adoptopenjdk-11
+
+# Optionally set the version of Python and requirements required to build your docs
+python:
+  install:
+    - method: pip
+      path: .
+    - requirements: requirements/docs.txt

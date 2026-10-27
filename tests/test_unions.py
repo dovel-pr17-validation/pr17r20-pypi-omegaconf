@@ -1,0 +1,192 @@
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Union
+
+from pytest import mark, param, raises
+
+from omegaconf import OmegaConf, UnionNode, ValidationError
+from omegaconf._utils import _get_value, get_type_hint
+from tests import Color
+
+
+@dataclass
+class LiteralOrIntConfig:
+    value: Union[Literal["auto", "manual"], int] = "auto"
+
+
+@dataclass
+class NoneLiteralOrIntConfig:
+    value: Union[Literal[None], int] = None
+    sequence: List[Union[Literal[None], int]] = field(default_factory=lambda: [None, 1])
+    mapping: Dict[str, Union[Literal[None], int]] = field(
+        default_factory=lambda: {"none": None, "int": 1}
+    )
+
+
+@dataclass
+class AnyOrIntConfig:
+    value: Union[Any, int] = 10
+
+
+def test_union_containing_any_is_normalized_to_any() -> None:
+    cfg = OmegaConf.structured(AnyOrIntConfig)
+    assert get_type_hint(cfg, "value") is Any
+
+    for value in (None, "text", [1, "two"], {"three": 3}):
+        cfg.value = value
+        assert cfg.value == value
+
+
+def test_structured_config_union_with_literal_creation() -> None:
+    cfg = OmegaConf.structured(LiteralOrIntConfig)
+
+    assert cfg.value == "auto"
+
+
+def test_structured_config_union_with_literal_assignment() -> None:
+    cfg = OmegaConf.structured(LiteralOrIntConfig)
+
+    cfg.value = "manual"
+    assert cfg.value == "manual"
+
+    cfg.value = 10
+    assert cfg.value == 10
+
+    with raises(ValidationError):
+        cfg.value = "invalid"
+
+
+@mark.parametrize(
+    "ref_type",
+    [Union[Literal["hidden"], str], Union[str, Literal["hidden"]]],
+)
+def test_union_prefers_matching_literal_over_scalar(ref_type: Any) -> None:
+    node = UnionNode("hidden", ref_type)
+    selected = node._value()
+    assert selected is not None and not isinstance(selected, str)
+    assert selected._metadata.ref_type == Literal["hidden"]
+
+    node._set_value("visible")
+    selected = node._value()
+    assert selected is not None and not isinstance(selected, str)
+    assert selected._metadata.ref_type is str
+
+    node._set_value("hidden")
+    selected = node._value()
+    assert selected is not None and not isinstance(selected, str)
+    assert selected._metadata.ref_type == Literal["hidden"]
+
+
+def test_structured_config_union_with_none_literal_creation() -> None:
+    cfg = OmegaConf.structured(NoneLiteralOrIntConfig)
+
+    assert cfg.value is None
+    assert cfg.sequence == [None, 1]
+    assert cfg.mapping == {"none": None, "int": 1}
+
+
+def test_structured_config_union_with_none_literal_assignment() -> None:
+    cfg = OmegaConf.structured(NoneLiteralOrIntConfig)
+
+    cfg.value = 10
+    cfg.value = None
+    cfg.sequence.append(None)
+    cfg.sequence[1] = None
+    cfg.mapping["int"] = None
+    cfg.mapping["new"] = None
+
+    assert cfg.value is None
+    assert cfg.sequence == [None, None, None]
+    assert cfg.mapping == {"none": None, "int": None, "new": None}
+
+
+@mark.parametrize(
+    "union_args",
+    [
+        param((int, float), id="int_float"),
+        param((float, bool), id="float_bool"),
+        param((bool, str), id="bool_str"),
+        param((str, bytes), id="str_bytes"),
+        param((bytes, Color), id="bytes_color"),
+        param((Color, int), id="color_int"),
+    ],
+)
+@mark.parametrize(
+    "input_",
+    [
+        param(123, id="123"),
+        param(10.1, id="10.1"),
+        param(b"binary", id="binary"),
+        param(True, id="true"),
+        param("abc", id="abc"),
+        param("RED", id="red_str"),
+        param("123", id="123_str"),
+        param("10.1", id="10.1_str"),
+        param(Color.RED, id="Color.RED"),
+        param(Path("hello.txt"), id="path"),
+        param(object(), id="object"),
+    ],
+)
+class TestUnionNode:
+    def test_creation(self, input_: Any, union_args: Any) -> None:
+        ref_type = Union[union_args]
+        legal = type(input_) in union_args
+        if legal:
+            node = UnionNode(input_, ref_type)
+            assert _get_value(node) == input_
+        else:
+            with raises(ValidationError):
+                UnionNode(input_, ref_type)
+
+    def test_set_value(self, input_: Any, union_args: Any) -> None:
+        ref_type = Union[union_args]
+        legal = type(input_) in union_args
+        node = UnionNode(None, ref_type)
+        if legal:
+            node._set_value(input_)
+            assert _get_value(node) == input_
+        else:
+            with raises(ValidationError):
+                node._set_value(input_)
+
+
+@mark.parametrize(
+    "optional", [param(True, id="optional"), param(False, id="not_optional")]
+)
+@mark.parametrize(
+    "input_",
+    [
+        param("???", id="missing"),
+        param("${interp}", id="interp"),
+        param(None, id="none"),
+    ],
+)
+class TestUnionNodeSpecial:
+    def test_creation_special(self, input_: Any, optional: bool) -> None:
+        if input_ is None and not optional:
+            with raises(ValidationError):
+                UnionNode(input_, Union[int, str], is_optional=optional)
+        else:
+            node = UnionNode(input_, Union[int, str], is_optional=optional)
+            assert node._value() == input_
+
+    def test_set_value_special(self, input_: Any, optional: bool) -> None:
+        node = UnionNode(123, Union[int, str], is_optional=optional)
+        if input_ is None and not optional:
+            with raises(ValidationError):
+                node._set_value(input_)
+        else:
+            node._set_value(input_)
+            assert node._value() == input_
+
+
+def test_get_parent_container() -> None:
+    cfg = OmegaConf.create({"foo": UnionNode(123, Union[int, str]), "bar": "baz"})
+
+    unode = cfg._get_node("foo")
+    nested_node = unode._value()  # type: ignore
+    any_node = cfg._get_node("bar")
+
+    assert unode._get_parent_container() is cfg  # type: ignore
+    assert nested_node._get_parent_container() is cfg
+    assert any_node._get_parent_container() is cfg  # type: ignore

@@ -1,0 +1,28 @@
+[report]
+show_missing = True
+omit =
+    .github/docusaurus/*
+    .nox/*
+    */tests/*
+    .claude/*
+    docs/*
+    legacy/rtd/*
+    website/scripts/*
+    omegaconf/grammar/gen/*
+    omegaconf/vendor/*
+    omegaconf/version.py
+    omegaconf/typing.py
+    .stubs
+
+exclude_lines =
+    pragma: no cover
+    raise AssertionError
+    raise NotImplementedError
+    raise TypeError
+    assert False
+    @abstractmethod
+    \.\.\.
+    if TYPE_CHECKING:
+
+[html]
+directory = legacy/rtd/build/coverage

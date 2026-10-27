@@ -1,0 +1,110 @@
+version: 2.1
+
+commands:
+  linux:
+    description: "Commands run on Linux"
+    parameters:
+      py_version:
+        type: string
+    steps:
+      - checkout
+      - run:
+          name: "Preparing environment"
+          command: |
+            python --version  # check that python is installed
+            sudo apt-get update
+            sudo apt-get install -y openjdk-11-jre
+            pip install nox
+      - run:
+          name: "Testing OmegaConf"
+          command: |
+            export NOX_PYTHON_VERSIONS=<< parameters.py_version >>
+            # Run only the parametrized sessions (omegaconf, test_jupyter_notebook)
+            # Skip coverage, lint, docs which are handled by separate jobs
+            nox --add-timestamp -s omegaconf test_jupyter_notebook
+
+jobs:
+  test_linux:
+    parameters:
+      py_version:
+        type: string
+    docker:
+      - image: cimg/python:<< parameters.py_version >>
+    steps:
+      - linux:
+          py_version: << parameters.py_version >>
+
+  coverage:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - run:
+          name: "Preparing environment"
+          command: |
+            python --version
+            sudo apt-get update
+            sudo apt-get install -y openjdk-11-jre
+            pip install nox
+      - run:
+          name: "Running coverage"
+          command: nox --add-timestamp -s coverage
+      - run:
+          name: "Uploading coverage to Coveralls"
+          command: |
+            # Local 100% coverage is mandatory; uploads remain best effort.
+            (
+              reporter_dir=$(mktemp -d) || exit 1
+              trap 'rm -rf "$reporter_dir"' EXIT
+              export CI_PULL_REQUEST="${CIRCLE_PULL_REQUEST:-}"
+              curl --fail --silent --show-error --location \
+                https://github.com/coverallsapp/coverage-reporter/releases/download/v0.6.22/coveralls-linux-x86_64.tar.gz \
+                --output "$reporter_dir/coveralls.tar.gz" &&
+              printf '%s  %s\n' cd042b63bcb2c03fd0fd3372c040507331f5013a997828071e2ab7f9584fc7d6 "$reporter_dir/coveralls.tar.gz" | sha256sum --check --status &&
+              tar -xzf "$reporter_dir/coveralls.tar.gz" -C "$reporter_dir" &&
+              "$reporter_dir/coveralls" report coverage.xml --format=cobertura --no-fail
+            ) || echo "Coveralls upload failed; local 100% coverage passed."
+
+  lint:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - run:
+          name: "Preparing environment"
+          command: |
+            python --version
+            sudo apt-get update
+            sudo apt-get install -y openjdk-11-jre
+            pip install nox
+      - run:
+          name: "Running lint"
+          command: nox --add-timestamp -s lint
+
+  docs:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - run:
+          name: "Preparing environment"
+          command: |
+            python --version
+            sudo apt-get update
+            sudo apt-get install -y openjdk-11-jre
+            pip install nox
+      - run:
+          name: "Building docs"
+          command: nox --add-timestamp -s docs
+
+workflows:
+  version: 2
+  build:
+    jobs:
+      - test_linux:
+          matrix:
+            parameters:
+              py_version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+      - coverage
+      - lint
+      - docs

@@ -1,0 +1,1258 @@
+=====
+Usage
+=====
+
+.. contents::
+   :local:
+
+.. testsetup:: *
+
+    from omegaconf import OmegaConf, DictConfig, ListConfig, TupleConfig, open_dict, read_write
+    import os
+    import sys
+    import tempfile
+    import pickle
+    from pytest import raises
+    # ensures that DB_TIMEOUT is not set in the doc.
+    os.environ.pop('DB_TIMEOUT', None)
+
+.. testsetup:: loaded
+
+    from omegaconf import OmegaConf
+    conf = OmegaConf.load('source/example.yaml')
+
+Installation
+------------
+
+Just pip install::
+
+    pip install omegaconf
+
+OmegaConf requires Python 3.8 or newer.
+
+.. _creating:
+
+Creating
+--------
+You can create OmegaConf objects from multiple sources.
+
+Empty
+^^^^^
+
+.. doctest::
+
+    >>> from omegaconf import OmegaConf
+    >>> conf = OmegaConf.create()
+    >>> print(OmegaConf.to_yaml(conf))
+    {}
+    <BLANKLINE>
+
+From a dictionary
+^^^^^^^^^^^^^^^^^
+
+.. doctest::
+
+    >>> conf = OmegaConf.create({"k" : "v", "list" : [1, {"a": "1", "b": "2", 3: "c"}]})
+    >>> print(OmegaConf.to_yaml(conf))
+    k: v
+    list:
+    - 1
+    - a: '1'
+      b: '2'
+      3: c
+    <BLANKLINE>
+
+Here is an example of various supported key types:
+
+.. doctest::
+
+    >>> from enum import Enum
+    >>> class Color(Enum):
+    ...   RED = 1
+    ...   BLUE = 2
+    >>> 
+    >>> conf = OmegaConf.create(
+    ...   {"key": "str", 123: "int", True: "bool", 3.14: "float", Color.RED: "Color", b"123": "bytes"}
+    ... )
+    >>> 
+    >>> print(conf)
+    {'key': 'str', 123: 'int', True: 'bool', 3.14: 'float', <Color.RED: 1>: 'Color', b'123': 'bytes'}
+
+OmegaConf supports ``str``, ``int``, ``bool``, ``float`` ``bytes``, and ``Enum`` as dictionary key types.
+
+Integer keys can be referenced by interpolation and key-path selection in the
+same way that integer path elements select list indices. For example, ``${1}``
+can reference either the integer key ``1`` or the string key ``"1"``. A
+``DictConfig`` cannot contain both forms because that would make the
+interpolation ambiguous. This fallback applies only to integers; float,
+boolean, and enum keys are not inferred from string path elements.
+
+From a list
+^^^^^^^^^^^
+
+.. doctest::
+
+    >>> conf = OmegaConf.create([1, {"a":10, "b": {"a":10, 123: "int_key"}}])
+    >>> print(OmegaConf.to_yaml(conf))
+    - 1
+    - a: 10
+      b:
+        a: 10
+        123: int_key
+    <BLANKLINE>
+
+From a tuple (experimental)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Native tuples create immutable ``TupleConfig`` values. Tuple semantics are
+experimental in OmegaConf 2.4 and feedback is welcome. This is a breaking
+change from earlier versions, which converted tuples to mutable ``ListConfig``
+objects. See :doc:`tuple_migration` for affected patterns and migration
+guidance.
+
+.. doctest::
+
+    >>> conf = OmegaConf.create((1, "two"))
+    >>> isinstance(conf, TupleConfig)
+    True
+    >>> conf == (1, "two")
+    True
+    >>> with raises(TypeError):
+    ...     conf[0] = 10
+
+From a YAML file
+^^^^^^^^^^^^^^^^
+
+.. doctest::
+
+    >>> conf = OmegaConf.load('source/example.yaml')
+    >>> # Output is identical to the YAML file
+    >>> print(OmegaConf.to_yaml(conf))
+    server:
+      port: 80
+    log:
+      file: ???
+      rotation: 3600
+    users:
+    - user1
+    - user2
+    <BLANKLINE>
+
+
+From a YAML string
+^^^^^^^^^^^^^^^^^^
+
+.. doctest::
+
+    >>> s = """
+    ... a: b
+    ... b: c
+    ... list:
+    ... - item1
+    ... - item2
+    ... 123: 456
+    ... """
+    >>> conf = OmegaConf.create(s)
+    >>> print(OmegaConf.to_yaml(conf))
+    a: b
+    b: c
+    list:
+    - item1
+    - item2
+    123: 456
+    <BLANKLINE>
+
+From a dot-list
+^^^^^^^^^^^^^^^^
+
+Each entry is a ``"key=value"`` string.  The key path uses dot/bracket notation.
+Keys that contain literal dots, brackets, or ``=`` can be escaped with a backslash
+(see :ref:`keypath-escaping`).
+Malformed key paths raise ``GrammarParseError``. Dotlist and CLI updates check
+every key path before applying any entry.
+
+.. doctest::
+
+    >>> dot_list = ["a.aa.aaa=1", "a.aa.bbb=2", "a.bb.aaa=3", "a.bb.bbb=4"]
+    >>> conf = OmegaConf.from_dotlist(dot_list)
+    >>> print(OmegaConf.to_yaml(conf))
+    a:
+      aa:
+        aaa: 1
+        bbb: 2
+      bb:
+        aaa: 3
+        bbb: 4
+    <BLANKLINE>
+
+From command line arguments
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To parse the content of sys.arg:
+
+.. doctest::
+
+    >>> # Simulating command line arguments
+    >>> sys.argv = ['your-program.py', 'server.port=82', 'log.file=log2.txt']
+    >>> conf = OmegaConf.from_cli()
+    >>> print(OmegaConf.to_yaml(conf))
+    server:
+      port: 82
+    log:
+      file: log2.txt
+    <BLANKLINE>
+
+From structured config
+^^^^^^^^^^^^^^^^^^^^^^
+
+You can create OmegaConf objects from structured config classes or objects. This provides static and runtime type safety.
+See :doc:`structured_config` for more details, or keep reading for a minimal example.
+
+.. doctest::
+
+    >>> from dataclasses import dataclass
+    >>> @dataclass
+    ... class MyConfig:
+    ...     port: int = 80
+    ...     host: str = "localhost"
+    >>> # For strict typing purposes, prefer OmegaConf.structured() when creating structured configs
+    >>> conf = OmegaConf.structured(MyConfig)
+    >>> print(OmegaConf.to_yaml(conf))
+    port: 80
+    host: localhost
+    <BLANKLINE>
+
+You can use an object to initialize the config as well:
+
+.. doctest::
+
+    >>> conf = OmegaConf.structured(MyConfig(port=443))
+    >>> print(OmegaConf.to_yaml(conf))
+    port: 443
+    host: localhost
+    <BLANKLINE>
+
+OmegaConf objects constructed from Structured classes provide runtime type safety:
+
+.. doctest::
+
+    >>> conf.port = 42      # Ok, type matches
+    >>> OmegaConf.update(conf, "port", "oops")  # "oops" cannot be converted to an int
+    Traceback (most recent call last):
+    ...
+    omegaconf.errors.ValidationError: Value 'oops' could not be converted to Integer
+
+For explicit conversion and the deprecation of conversion by direct assignment,
+see :ref:`structured-config-conversion`.
+
+In addition, the config class can be used as type annotation for static type checkers or IDEs:
+
+.. doctest::
+
+    >>> def foo(conf: MyConfig):
+    ...     print(conf.port) # passes static type checker
+    ...     print(conf.pork) # fails static type checker
+
+Access and manipulation
+-----------------------
+
+Input YAML file for this section:
+
+.. literalinclude:: example.yaml
+   :language: yaml
+
+Access
+^^^^^^
+
+.. doctest:: loaded
+
+    >>> # object style access of dictionary elements
+    >>> conf.server.port
+    80
+
+    >>> # dictionary style access
+    >>> conf['log']['rotation']
+    3600
+
+    >>> # items in list
+    >>> conf.users[0]
+    'user1'
+
+Default values
+^^^^^^^^^^^^^^
+You can provide default values directly in the accessing code:
+
+.. doctest:: loaded
+
+    >>> conf.get('missing_key', 'a default value')
+    'a default value'
+
+Mandatory values
+^^^^^^^^^^^^^^^^
+Use the value ``"???"`` to indicate parameters that need to be set prior to access.
+Quoting ``???`` in YAML does not change its meaning. To store the literal text
+``???``, prefix it with a backslash (``\???``). To store one actual backslash
+followed by ``???``, write ``\\???``. The same rule applies to Python input,
+assignment, and resolver return values. OmegaConf preserves the distinction
+through interpolation and YAML serialization.
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create({"required": "???", "literal": r"\???"})
+    >>> OmegaConf.is_missing(cfg, "required")
+    True
+    >>> cfg.literal == "???"
+    True
+    >>> OmegaConf.is_missing(cfg, "literal")
+    False
+
+The returned literal is a ``str`` subclass. It compares equal to ``"???"``,
+so use ``OmegaConf.is_missing(value)`` when checking a detached value. Passing
+it unchanged through an assignment or resolver retains its literal meaning;
+constructing a new plain ``"???"`` string means missing.
+
+.. doctest:: loaded
+
+    >>> conf.log.file
+    Traceback (most recent call last):
+    ...
+    omegaconf.MissingMandatoryValue: log.file
+
+
+Manipulation
+^^^^^^^^^^^^
+.. doctest:: loaded
+
+    >>> # Changing existing keys
+    >>> conf.server.port = 81
+
+    >>> # Adding new keys
+    >>> conf.server.hostname = "localhost"
+
+    >>> # Adding a new dictionary
+    >>> conf.database = {'hostname': 'database01', 'port': 3306}
+
+
+Hashing
+^^^^^^^
+
+OmegaConf containers are unhashable because their values can change. They
+cannot be used as dictionary keys or set elements. If you currently use
+containers this way, migrate to an application-defined stable key. OmegaConf
+does not provide a hashable representation that preserves all config semantics.
+Read-only configs remain unhashable because the read-only flag is reversible
+and interpolations or resolvers can change their effective values.
+
+.. doctest::
+
+    >>> conf = OmegaConf.create({"key": "value"})
+    >>> hash(conf)
+    Traceback (most recent call last):
+    ...
+    TypeError: unhashable type: 'DictConfig'
+
+
+Serialization
+-------------
+OmegaConf objects can be saved and loaded with OmegaConf.save() and OmegaConf.load().
+The created file is in YAML format.
+Save and load can operate on file-names, Paths and file objects.
+
+YAML flow style
+^^^^^^^^^^^^^^^
+``OmegaConf.to_yaml()`` accepts PyYAML's ``default_flow_style`` option.
+For example, ``default_flow_style=None`` can keep nested collections compact:
+
+.. doctest::
+
+    >>> conf = OmegaConf.create({"nhood": [[-1, 0, 0], [0, -1, 0], [0, 0, -1]]})
+    >>> print(OmegaConf.to_yaml(conf, default_flow_style=None), end="")
+    nhood:
+    - [-1, 0, 0]
+    - [0, -1, 0]
+    - [0, 0, -1]
+
+Save/Load YAML file
+^^^^^^^^^^^^^^^^^^^
+
+.. doctest:: loaded
+
+    >>> conf = OmegaConf.create({"foo": 10, "bar": 20, 123: 456})
+    >>> with tempfile.NamedTemporaryFile() as fp:
+    ...     OmegaConf.save(config=conf, f=fp.name)
+    ...     loaded = OmegaConf.load(fp.name)
+    ...     assert conf == loaded
+
+Note that this does not retain type information.
+
+.. _save_and_load_pickle_file:
+
+Save/Load pickle file
+^^^^^^^^^^^^^^^^^^^^^
+Use pickle to save and load while retaining the type information.
+Note that the saved file may be incompatible across different versions of OmegaConf.
+
+.. doctest:: loaded
+
+    >>> conf = OmegaConf.create({"foo": 10, "bar": 20, 123: 456})
+    >>> with tempfile.TemporaryFile() as fp:
+    ...     pickle.dump(conf, fp)
+    ...     fp.flush()
+    ...     assert fp.seek(0) == 0
+    ...     loaded = pickle.load(fp)
+    ...     assert conf == loaded
+
+
+.. _interpolation:
+
+Variable interpolation
+----------------------
+
+OmegaConf supports variable interpolation. Interpolations are evaluated lazily on access.
+
+.. _config-node-interpolation:
+
+Config node interpolation
+^^^^^^^^^^^^^^^^^^^^^^^^^
+The interpolated variable can be the path to another node in the configuration, and in that case
+the value will be the value of that node.
+This path may use either dot-notation (``foo.1``), brackets (``[foo][1]``) or a mix of both (``foo[1]``, ``[foo].1``).
+Escape a dot, bracket, or colon with a backslash when it is part of a key name
+rather than path syntax. An equals sign is already literal in an interpolation
+key and needs no escape. Write two backslashes for a literal backslash. A
+following unescaped dot still separates path segments; escape the dot too if
+it belongs to the same key. For example:
+
+.. doctest::
+
+    >>> escaped_conf = OmegaConf.create({"a.b": 10, "ref": r"${a\.b}"})
+    >>> escaped_conf.ref
+    10
+    >>> backslash_conf = OmegaConf.create({"a\\b": 20, "ref": r"${a\\b}"})
+    >>> backslash_conf.ref
+    20
+    >>> nested_conf = OmegaConf.create({"a\\": {"b": 30}, "ref": r"${a\\.b}"})
+    >>> nested_conf.ref
+    30
+    >>> literal_dot_conf = OmegaConf.create({r"a\.b": 40, "ref": r"${a\\\.b}"})
+    >>> literal_dot_conf.ref
+    40
+
+Escaping also works in bracket notation and relative interpolations, such as
+``${[a\.b]}`` and ``${.a\.b}``. In Python source, use a raw string (as above)
+to preserve the backslash.
+
+Interpolations are absolute by default. Relative interpolation are prefixed by one or more dots:
+The first dot denotes the level of the node itself and additional dots are going up the parent hierarchy.
+e.g. ``${..foo}`` points to the ``foo`` sibling of the parent of the current node.
+
+NOTE: Interpolations may cause config cycles. Such cycles are forbidden and may cause undefined behavior.
+
+Input YAML file:
+
+.. include:: config_interpolation.yaml
+   :code: yaml
+
+
+Example:
+
+.. doctest::
+
+    >>> conf = OmegaConf.load('source/config_interpolation.yaml')
+    >>> def show(x):
+    ...     print(f"type: {type(x).__name__}, value: {repr(x)}")
+    >>> # Primitive interpolation types are inherited from the reference
+    >>> show(conf.client.server_port)
+    type: int, value: 80
+    >>> # String interpolations concatenate fragments into a string
+    >>> show(conf.client.url)
+    type: str, value: 'http://localhost:80/'
+    >>> # Relative interpolation example
+    >>> show(conf.client.description)
+    type: str, value: 'Client of http://localhost:80/'
+
+.. _nested-interpolation:
+
+Nested interpolation
+~~~~~~~~~~~~~~~~~~~~
+
+Interpolations may be nested, enabling more advanced behavior like dynamically selecting a sub-config:
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create(
+    ...    {
+    ...        "plans": {
+    ...            "A": "plan A",
+    ...            "B": "plan B",
+    ...        },
+    ...        "selected_plan": "A",
+    ...        "plan": "${plans[${selected_plan}]}",
+    ...    }
+    ... )
+    >>> cfg.plan # default plan
+    'plan A'
+    >>> cfg.selected_plan = "B"
+    >>> cfg.plan # new plan
+    'plan B'
+
+Interpolated nodes can be any node in the config, not just leaf nodes:
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create(
+    ...     {
+    ...         "john": {"height": 180, "weight": 75},
+    ...         "player": "${john}",
+    ...     }
+    ... )
+    >>> (cfg.player.height, cfg.player.weight)
+    (180, 75)
+
+.. _resolvers:
+
+Resolvers
+^^^^^^^^^
+Add new interpolation types by registering resolvers using ``OmegaConf.register_resolver()``.
+Such resolvers are called when the config node is accessed.
+The minimal example below shows its most basic usage, see :doc:`custom_resolvers` for more details.
+
+.. doctest::
+
+    >>> OmegaConf.register_resolver(
+    ...     "add", lambda *numbers: sum(numbers)
+    ... )
+    >>> c = OmegaConf.create({'total': '${add:1,2,3}'})
+    >>> c.total
+    6
+
+Built-in resolvers
+^^^^^^^^^^^^^^^^^^
+OmegaConf comes with a set of built-in custom resolvers:
+
+* :ref:`oc.create`: Dynamically generating config nodes
+* :ref:`oc.coerce`: Converting a value to an explicit primitive node type
+* :ref:`oc.decode`: Parsing an input string using interpolation grammar
+* :ref:`oc.deprecated`: Deprecate a key in your config
+* :ref:`oc.env`: Accessing environment variables
+* :ref:`oc.select`: Selecting an interpolation key, similar to interpolation but more flexible
+* :ref:`oc.dict.{keys,values}`: Viewing the keys or the values of a dictionary as a list
+
+
+Merging configurations
+----------------------
+Merging configurations enables the creation of reusable configuration files for each logical component
+instead of a single config file for each variation of your task.
+
+OmegaConf.merge()
+^^^^^^^^^^^^^^^^^
+
+Machine learning experiment example:
+
+.. code-block:: python
+
+   conf = OmegaConf.merge(base_cfg, model_cfg, optimizer_cfg, dataset_cfg)
+
+Web server configuration example:
+
+.. code-block:: python
+
+   conf = OmegaConf.merge(server_cfg, plugin1_cfg, site1_cfg, site2_cfg)
+
+The following example creates two configs from files, and one from the cli. It then combines them into a single object.
+Note how the port changes to 82.
+
+**example2.yaml** file:
+
+.. include:: example2.yaml
+   :code: yaml
+
+**example3.yaml** file:
+
+.. include:: example3.yaml
+   :code: yaml
+
+
+.. doctest::
+
+    >>> from omegaconf import OmegaConf
+    >>> import sys
+    >>>
+    >>> # Simulate command line arguments
+    >>> sys.argv = ['program.py', 'server.port=82']
+    >>>
+    >>> base_conf = OmegaConf.load('source/example2.yaml')
+    >>> second_conf = OmegaConf.load('source/example3.yaml')
+    >>> cli_conf = OmegaConf.from_cli()
+    >>>
+    >>> # merge them all
+    >>> conf = OmegaConf.merge(base_conf, second_conf, cli_conf)
+    >>> print(OmegaConf.to_yaml(conf))
+    server:
+      port: 82
+    users:
+    - user1
+    - user2
+    log:
+      file: log.txt
+    <BLANKLINE>
+
+``merge()`` replaces the target list with the source list.
+
+Missing values in ``merge()``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``merge()`` treats ``MISSING`` (``"???"``) on the *source* side as "no value
+to apply" rather than as a value to write — a non-missing value on the
+target is never overwritten by a missing value coming from a later config.
+Merging in the opposite order does fill the missing value:
+
+.. doctest::
+
+    >>> from omegaconf import OmegaConf
+    >>> base = OmegaConf.create({"port": 80})
+    >>> override = OmegaConf.create({"port": "???"})
+    >>>
+    >>> # MISSING on the source side does not overwrite an existing value.
+    >>> print(OmegaConf.merge(base, override))
+    {'port': 80}
+    >>>
+    >>> # The reverse order does fill the missing value.
+    >>> print(OmegaConf.merge(override, base))
+    {'port': 80}
+
+This is useful when a later config (e.g. a base schema) declares some keys
+as mandatory: those declarations do not clobber concrete values supplied by
+an earlier config.
+
+Union operator (``|`` and ``|=``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Python 3.9+ dict-style union operators are supported on ``DictConfig``.
+These operators are not supported on ``ListConfig`` and will raise a ``TypeError``.
+
+``cfg1 | cfg2`` returns a new merged config (equivalent to ``OmegaConf.merge(cfg1, cfg2)``):
+
+.. doctest::
+
+    >>> from omegaconf import OmegaConf
+    >>> cfg1 = OmegaConf.create({"a": 1, "b": 2})
+    >>> cfg2 = OmegaConf.create({"b": 20, "c": 3})
+    >>> result = cfg1 | cfg2
+    >>> print(result)
+    {'a': 1, 'b': 20, 'c': 3}
+    >>> print(cfg1)  # unchanged
+    {'a': 1, 'b': 2}
+
+A plain dict can appear on either side:
+
+.. doctest::
+
+    >>> from omegaconf import OmegaConf
+    >>> cfg1 = OmegaConf.create({"a": 1, "b": 2})
+    >>> result = {"b": 20, "c": 3} | cfg1
+    >>> print(result)
+    {'b': 2, 'c': 3, 'a': 1}
+
+``cfg1 |= cfg2`` merges in place (equivalent to ``cfg1.merge_with(cfg2)``):
+
+.. doctest::
+
+    >>> from omegaconf import OmegaConf
+    >>> cfg1 = OmegaConf.create({"a": 1, "b": 2})
+    >>> cfg1 |= {"b": 20, "c": 3}
+    >>> print(cfg1)
+    {'a': 1, 'b': 20, 'c': 3}
+
+OmegaConf.unsafe_merge()
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+OmegaConf offers a second faster function to merge config objects:
+
+.. code-block:: python
+
+   conf = OmegaConf.unsafe_merge(base_cfg, model_cfg, optimizer_cfg, dataset_cfg)
+
+Unlike OmegaConf.merge(), unsafe_merge() is destroying the input configs and they should no longer be used
+after this call. The upside is that it's substantially faster.
+
+Configuration flags
+-------------------
+
+OmegaConf support several configuration flags.
+Configuration flags can be set on any configuration node (Sequence or Mapping). if a configuration flag is not set
+it inherits the value from the parent of the node.
+The default value inherited from the root node is always false.
+
+.. _read-only-flag:
+
+Read-only flag
+^^^^^^^^^^^^^^
+A read-only configuration cannot be modified.
+An attempt to modify it will result in omegaconf.ReadonlyConfigError exception
+
+.. doctest:: loaded
+
+    >>> conf = OmegaConf.create({"a": {"b": 10}})
+    >>> OmegaConf.set_readonly(conf, True)
+    >>> conf.a.b = 20
+    Traceback (most recent call last):
+    ...
+    omegaconf.ReadonlyConfigError: a.b
+
+You can temporarily remove the read only flag from a config object:
+
+.. doctest:: loaded
+
+    >>> conf = OmegaConf.create({"a": {"b": 10}})
+    >>> OmegaConf.set_readonly(conf, True)
+    >>> with read_write(conf):
+    ...   conf.a.b = 20
+    >>> conf.a.b
+    20
+
+.. _struct-flag:
+
+Struct flag
+^^^^^^^^^^^
+By default, OmegaConf dictionaries allow write access to unknown fields.
+If a field does not exist, writing it will create the field, and attempting to
+access the field before creation will raise an exception (either ``ConfigKeyError``
+or ``ConfigAttributeError``, depending on the mode of access).
+It's sometime useful to change this behavior.  Using ``OmegaConf.set_struct``,
+it is possible to prevent the creation of fields that do not exist:
+
+
+.. doctest:: loaded
+
+    >>> conf = OmegaConf.create({"a": {"aa": 10, "bb": 20}})
+    >>> OmegaConf.set_struct(conf, True)
+    >>> conf.a.cc = 30
+    Traceback (most recent call last):
+    ...
+    omegaconf.errors.ConfigAttributeError: Error setting cc=30 : Key 'cc' is not in struct
+        full_key: a.cc
+        reference_type=Any
+        object_type=dict
+
+
+You can temporarily remove the struct flag from a config object:
+
+.. doctest:: loaded
+
+    >>> from omegaconf import open_dict
+    >>> conf = OmegaConf.create({"a": {"aa": 10, "bb": 20}})
+    >>> OmegaConf.set_struct(conf, True)
+    >>> with open_dict(conf):
+    ...   conf.a.cc = 30
+    >>> conf.a.cc
+    30
+
+Utility functions
+-----------------
+
+OmegaConf.to_container
+^^^^^^^^^^^^^^^^^^^^^^
+OmegaConf containers look similar to Python dictionaries, lists, and tuples, but
+are not native containers. Use ``OmegaConf.to_container(cfg: Container,
+resolve: bool)`` to convert them to plain dictionaries, lists, and tuples.
+If ``resolve`` is set to ``True``, interpolations will be resolved during conversion.
+This plain-value export loses the distinction between missing ``???`` and an
+escaped literal ``\???``: both appear as ``"???"``. Use
+``OmegaConf.to_yaml()`` for a round trip that preserves the distinction.
+
+.. doctest::
+
+    >>> conf = OmegaConf.create({"foo": "bar", "foo2": "${foo}"})
+    >>> assert type(conf) == DictConfig
+    >>> primitive = OmegaConf.to_container(conf)
+    >>> show(primitive)
+    type: dict, value: {'foo': 'bar', 'foo2': '${foo}'}
+    >>> resolved = OmegaConf.to_container(conf, resolve=True)
+    >>> show(resolved)
+    type: dict, value: {'foo': 'bar', 'foo2': 'bar'}
+
+
+Using ``throw_on_missing``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+You can control how missing values are handled by ``OmegaConf.to_container()``
+using the ``throw_on_missing`` keyword argument.
+
+.. doctest::
+
+    >>> conf = OmegaConf.create({"foo": "bar", "missing": "???"})
+    >>> has_missing = OmegaConf.to_container(conf, throw_on_missing=False)
+    >>> show(has_missing)
+    type: dict, value: {'foo': 'bar', 'missing': '???'}
+    >>> OmegaConf.to_container(conf, throw_on_missing=True)
+    Traceback (most recent call last):
+    ...
+    omegaconf.errors.MissingMandatoryValue: Missing mandatory value: missing
+        full_key: missing
+        object_type=dict
+
+
+By default, ``throw_on_missing=False``.
+Setting ``throw_on_missing=True`` can be useful if you want your program to
+fail fast when there are missing values in the config.
+
+
+
+Using ``structured_config_mode``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+You can customize the treatment of ``OmegaConf.to_container()`` for
+Structured Config nodes using the ``structured_config_mode`` option.
+The default, ``structured_config_mode=SCMode.DICT``, converts Structured Config nodes to plain dict.
+
+Using ``structured_config_mode=SCMode.DICT_CONFIG`` causes such nodes to remain
+as ``DictConfig``, allowing attribute style access on the resulting node.
+
+Using ``structured_config_mode=SCMode.INSTANTIATE``, Structured Config nodes
+are converted to instances of the backing dataclass or attrs class. Note that
+when ``structured_config_mode=SCMode.INSTANTIATE``, interpolations nested within
+a structured config node will be resolved, even if ``OmegaConf.to_container`` is called
+with the the keyword argument ``resolve=False``, so that interpolations are resolved before
+being used to instantiate dataclass/attr class instances. Interpolations within
+non-structured parent nodes will be resolved (or not) as usual, according to
+the ``resolve`` keyword arg.
+
+.. doctest::
+
+    >>> from omegaconf import SCMode
+    >>> conf = OmegaConf.create({"structured_config": MyConfig})
+    >>> container = OmegaConf.to_container(conf,
+    ...     structured_config_mode=SCMode.DICT_CONFIG)
+    >>> show(container)
+    type: dict, value: {'structured_config': {'port': 80, 'host': 'localhost'}}
+    >>> show(container["structured_config"])
+    type: DictConfig, value: {'port': 80, 'host': 'localhost'}
+
+OmegaConf.structural_equality
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``OmegaConf.structural_equality(cfg1, cfg2)`` compares two configs by their
+unresolved container structure. Unlike comparison of plain values returned by
+``OmegaConf.to_container()``, it distinguishes missing ``???`` from escaped
+literal ``\???``.
+
+Interpolations and custom resolver expressions are compared as raw strings.
+They are not resolved during structural equality checks, and missing values do
+not raise.
+
+.. doctest::
+
+    >>> cfg1 = OmegaConf.create({"a": {"b": "${c}"}, "c": 10})
+    >>> cfg2 = OmegaConf.create({"a": {"b": "${c}"}, "c": 20})
+    >>> assert OmegaConf.structural_equality(cfg1.a, cfg2.a)
+    >>> assert not OmegaConf.structural_equality(cfg1, cfg2)
+    >>> missing1 = OmegaConf.create({"a": "???"})
+    >>> missing2 = OmegaConf.create({"a": "???"})
+    >>> assert OmegaConf.structural_equality(missing1, missing2)
+    >>> literal = OmegaConf.create({"a": r"\???"})
+    >>> assert not OmegaConf.structural_equality(missing1, literal)
+
+OmegaConf.to_object
+^^^^^^^^^^^^^^^^^^^^^^
+The ``OmegaConf.to_object`` method recursively converts ``DictConfig``, ``ListConfig``, and
+``TupleConfig`` objects into plain Python dicts, lists, and tuples, with the exception that Structured Config objects are
+converted into instances of the backing dataclass or attr class.  Interpolations in the config are always resolved by ``OmegaConf.to_object``.
+
+.. doctest::
+
+    >>> container = OmegaConf.to_object(conf)
+    >>> show(container)
+    type: dict, value: {'structured_config': MyConfig(port=80, host='localhost')}
+    >>> show(container["structured_config"])
+    type: MyConfig, value: MyConfig(port=80, host='localhost')
+
+Note that here, ``container["structured_config"]`` is actually an instance of
+``MyConfig``, whereas in the previous examples we had a ``dict`` or a
+``DictConfig`` object that was duck-typed to look like an instance of
+``MyConfig``.
+
+The call ``OmegaConf.to_object(conf)`` is equivalent to
+``OmegaConf.to_container(conf, resolve=True, throw_on_missing=True,
+structured_config_mode=SCMode.INSTANTIATE)``.
+
+OmegaConf.resolve
+^^^^^^^^^^^^^^^^^
+
+Normally interpolations are resolved lazily, at access time.
+``OmegaConf.resolve()`` eagerly resolves all interpolations in the given config object in-place.
+
+.. code-block:: python
+
+    OmegaConf.resolve(cfg)
+
+Example:
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create({"a": 10, "b": "${a}"})
+    >>> show(cfg)
+    type: DictConfig, value: {'a': 10, 'b': '${a}'}
+    >>> assert cfg.a == cfg.b == 10 # lazily resolving interpolation
+    >>> OmegaConf.resolve(cfg)
+    >>> show(cfg)
+    type: DictConfig, value: {'a': 10, 'b': 10}
+
+When a resolver returns a plain dict, list, or tuple, ``OmegaConf.resolve()``
+stores it as an OmegaConf container and resolves its children in the same call.
+Another field can refer to those children even if it appears before the resolver
+field. Ordinary lazy access to the resolver still returns its native Python
+container.
+
+.. warning::
+
+    ``OmegaConf.resolve()`` works correctly for configs that use only node
+    interpolations (``${key}``) with no custom resolvers.  When custom resolvers
+    are involved, results may depend on the depth-first, key insertion order
+    traversal, because custom resolvers can do anything — they may be stateful,
+    have side effects, or return different values on each call.  No traversal
+    strategy can account for this, so the limitation is by design.
+    For configs that use custom resolvers, prefer accessing values lazily (the
+    default) or use ``OmegaConf.to_container(cfg, resolve=True)`` to get a
+    resolved plain Python container without mutating the config in place.
+
+OmegaConf.select
+^^^^^^^^^^^^^^^^
+``OmegaConf.select()`` allows you to select a config node or value, using either a dot-notation or brackets to denote sub-keys.
+Keys containing literal dots, brackets, or ``=`` can be escaped with a backslash (see :ref:`keypath-escaping`).
+String path elements that represent integers can also select integer dictionary
+keys, consistent with integer list-index selection.
+Malformed paths return the explicitly supplied default, or raise
+``GrammarParseError`` when no default is supplied.
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create({
+    ...     "foo" : {
+    ...         "missing" : "???",
+    ...         "bar": {
+    ...             "zonk" : 10,
+    ...         }
+    ...     }
+    ... })
+    >>> assert OmegaConf.select(cfg, "foo") == {
+    ...     "missing" : "???",    
+    ...     "bar":  {
+    ...         "zonk" : 10, 
+    ...     }
+    ... }
+    >>> assert OmegaConf.select(cfg, "foo.bar") == {
+    ...     "zonk" : 10, 
+    ... }
+    >>> assert OmegaConf.select(cfg, "foo.bar.zonk") == 10    # dots
+    >>> assert OmegaConf.select(cfg, "foo[bar][zonk]") == 10  # brackets
+    >>> assert OmegaConf.select(OmegaConf.create({1: "one"}), "1") == "one"
+    >>> assert OmegaConf.select(cfg, "no_such_key", default=99) == 99
+    >>> assert OmegaConf.select(cfg, "foo.missing") is None
+    >>> assert OmegaConf.select(cfg, "foo.missing", default=99) == 99
+    >>> OmegaConf.select(cfg,
+    ...     "foo.missing", 
+    ...     throw_on_missing=True
+    ... )
+    Traceback (most recent call last):
+    ...
+    omegaconf.errors.MissingMandatoryValue: missing node selected
+        full_key: foo.missing
+
+OmegaConf.can_select
+^^^^^^^^^^^^^^^^^^^^
+``OmegaConf.can_select()`` checks whether ``OmegaConf.select()`` can select a
+config node or value without returning a default or raising. It uses the same
+key path syntax and behavior flag names as ``OmegaConf.select()`` for
+convenience, but ``OmegaConf.can_select()`` itself does not raise for select
+failures. A selected ``None`` value is considered selectable.
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create({
+    ...     "foo": {
+    ...         "bar": 10,
+    ...         "none": None,
+    ...         "missing": "???",
+    ...     },
+    ...     "bad": "${not_found}",
+    ... })
+    >>> assert OmegaConf.can_select(cfg, "foo.bar")
+    >>> assert OmegaConf.can_select(cfg, "foo.none")
+    >>> assert not OmegaConf.can_select(cfg, "foo.missing")
+    >>> assert not OmegaConf.can_select(cfg, "foo.no_such_key")
+    >>> assert not OmegaConf.can_select(cfg, "bad")
+    >>> assert not OmegaConf.can_select(
+    ...     cfg,
+    ...     "bad",
+    ...     throw_on_resolution_failure=False,
+    ... )
+
+OmegaConf.update
+^^^^^^^^^^^^^^^^
+``OmegaConf.update()`` allows you to update values in your config using either a dot-notation or brackets to denote sub-keys.
+Keys containing literal dots, brackets, or ``=`` can be escaped with a backslash (see :ref:`keypath-escaping`).
+
+The merge flag controls the behavior if the input is a ``dict`` or a ``list``.
+If ``merge=True`` true (the default), dicts and lists are merged instead of being assigned.
+The ``force_add`` flag ensures that the path is created even if it will result in insertion of new values into struct nodes.
+Malformed paths raise ``GrammarParseError`` before any config change.
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create({"foo" : {"bar": 10}})
+    >>> OmegaConf.update(cfg, "foo.bar", 20)
+    >>> assert cfg.foo.bar == 20
+    >>> # Set dictionary value (using dot notation)
+    >>> OmegaConf.update(cfg, "foo.bar", {"zonk" : 30}, merge=False)
+    >>> assert cfg.foo.bar == {"zonk" : 30}
+    >>> # Merge dictionary value (using bracket notation)
+    >>> # note that merge is True by default, so you don't really need it here.
+    >>> OmegaConf.update(cfg, "foo[bar]", {"oompa" : 40}, merge=True)
+    >>> assert cfg.foo.bar == {"zonk" : 30, "oompa" : 40}
+    >>> # force_add ignores nodes in struct mode or Structured Configs nodes 
+    >>> # and updates anyway, inserting keys as needed.
+    >>> OmegaConf.set_struct(cfg, True)
+    >>> OmegaConf.update(cfg, "a.b.c.d", 10, force_add=True)
+    >>> assert cfg.a.b.c.d == 10
+
+When an intermediate path element is a node interpolation whose reference
+chain ends at an existing config container, ``OmegaConf.update()`` follows the
+interpolation and updates the referenced container. The interpolation itself
+remains unchanged.
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create({"base": {"x": 1}, "alias": "${base}"})
+    >>> OmegaConf.update(cfg, "alias.y", 2)
+    >>> OmegaConf.to_container(cfg, resolve=False)
+    {'base': {'x': 1, 'y': 2}, 'alias': '${base}'}
+    >>> OmegaConf.is_interpolation(cfg, "alias")
+    True
+
+.. _keypath-escaping:
+
+Key path escaping
+^^^^^^^^^^^^^^^^^
+
+``OmegaConf.select``, ``OmegaConf.update``, ``OmegaConf.from_dotlist``, and
+``OmegaConf.from_cli`` all parse the key path through the same engine.  YAML
+allows keys to contain any character, including the delimiters that OmegaConf
+uses in key paths (``.``, ``[``, ``]``, ``=``). Key segments use the same
+backslash escapes as interpolation paths:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 20 50
+
+   * - Escape sequence
+     - Result character
+     - Notes
+   * - ``\.``
+     - ``.``
+     - Dot is part of the key, not a path separator
+   * - ``\[``
+     - ``[``
+     - Open bracket is part of the key
+   * - ``\]``
+     - ``]``
+     - Close bracket is part of the key
+   * - ``\=``
+     - ``=``
+     - Useful in ``from_dotlist`` keys that contain ``=``
+   * - ``\\``
+     - One backslash
+     - A following unescaped dot or bracket still separates path components
+   * - ``\:``
+     - ``:``
+     - Matches escaping in interpolation paths
+   * - Backslash before a brace, parenthesis, quote, space, or tab
+     - The following character
+     - Matches escaping in interpolation paths
+   * - ``\x`` (any other char)
+     - ``\x``
+     - Passthrough: backslash + character unchanged
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create({"a.b": 10, "x": {"a[0]": 20}})
+    >>> OmegaConf.select(cfg, r"a\.b")
+    10
+    >>> OmegaConf.update(cfg, r"a\.b", 99)
+    >>> cfg["a.b"]
+    99
+    >>> OmegaConf.select(cfg, r"x.a\[0\]")
+    20
+    >>> cfg = OmegaConf.create({"a:b": 10, "a\\": {"b": 20}, r"a\.b": 30})
+    >>> OmegaConf.select(cfg, r"a\:b")
+    10
+    >>> OmegaConf.select(cfg, r"a\\.b")
+    20
+    >>> OmegaConf.select(cfg, r"a\\\.b")
+    30
+
+In 2.4.1, key-path decoding now matches interpolation escaping. Existing
+paths that relied on preserving backslashes before recognized escape characters
+must use the new spellings. For example, use ``r"a\\\.b"`` instead of
+``r"a\\.b"`` for the single key ``a\.b``, and ``r"a\\\:b"`` instead of
+``r"a\:b"`` for the single key ``a\:b``. Raw dictionary indexing is unchanged.
+
+For ``from_dotlist`` and ``from_cli``, the ``=`` in the key must also be
+escaped so that it is not mistaken for the key/value separator:
+
+.. doctest::
+
+    >>> conf = OmegaConf.from_dotlist([r"a\.b\=c=42"])
+    >>> conf["a.b=c"]
+    42
+
+Values may contain ``=`` freely — only the first *unescaped* ``=`` separates
+key from value:
+
+.. doctest::
+
+    >>> conf = OmegaConf.from_dotlist(["url=http://example.com?a=1&b=2"])
+    >>> conf.url
+    'http://example.com?a=1&b=2'
+
+**CLI / shell note:** When arguments are passed on the command line, the shell
+processes them before Python sees them.  A single backslash in a shell argument
+is typically consumed by the shell.  To preserve it, either quote the argument
+or double the backslash:
+
+.. code-block:: bash
+
+    # single-quote preserves the backslash literally
+    python app.py 'a\.b=1'
+
+    # or double-escape
+    python app.py a\\.b=1
+
+
+OmegaConf.masked_copy
+^^^^^^^^^^^^^^^^^^^^^
+Creates a copy of a ``DictConfig`` that contains only specific keys.
+
+.. doctest:: loaded
+
+    >>> conf = OmegaConf.create({"a": {"b": 10}, "c":20})
+    >>> print(OmegaConf.to_yaml(conf))
+    a:
+      b: 10
+    c: 20
+    <BLANKLINE>
+    >>> c = OmegaConf.masked_copy(conf, ["a"])
+    >>> print(OmegaConf.to_yaml(c))
+    a:
+      b: 10
+    <BLANKLINE>
+
+OmegaConf.is_missing
+^^^^^^^^^^^^^^^^^^^^
+
+Tests whether a config field or a detached value is missing (``"???"``).
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create({
+    ...         "foo" : 10, 
+    ...         "bar": "???"
+    ...     })
+    >>> assert not OmegaConf.is_missing(cfg, "foo")
+    >>> assert OmegaConf.is_missing(cfg, "bar")
+    >>> assert OmegaConf.is_missing("???")
+    >>> assert not OmegaConf.is_missing(OmegaConf.create({"x": r"\???"}).x)
+
+OmegaConf.is_interpolation
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests if a value is an interpolation.
+
+.. doctest::
+
+    >>> cfg = OmegaConf.create({
+    ...         "foo" : 10, 
+    ...         "bar": "${foo}"
+    ...     })
+    >>> assert not OmegaConf.is_interpolation(cfg, "foo")
+    >>> assert OmegaConf.is_interpolation(cfg, "bar")
+
+
+OmegaConf.{is_config, is_dict, is_list, is_tuple, is_sequence}
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``OmegaConf.is_config`` tests whether an object is an OmegaConf container.
+``OmegaConf.is_dict(cfg)`` is equivalent to ``isinstance(cfg, DictConfig)``,
+``OmegaConf.is_list(cfg)`` is equivalent to ``isinstance(cfg, ListConfig)``, and
+``OmegaConf.is_tuple(cfg)`` is equivalent to ``isinstance(cfg, TupleConfig)``.
+``OmegaConf.is_sequence(cfg)`` is true for ``ListConfig`` and ``TupleConfig``
+but false for native Python lists and tuples.
+
+.. doctest::
+
+    >>> # dict:
+    >>> d = OmegaConf.create({"foo": "bar"})
+    >>> assert OmegaConf.is_config(d)
+    >>> assert OmegaConf.is_dict(d)
+    >>> assert not OmegaConf.is_list(d)
+    >>> # list:
+    >>> l = OmegaConf.create([1,2,3])
+    >>> assert OmegaConf.is_config(l)
+    >>> assert OmegaConf.is_list(l)
+    >>> assert not OmegaConf.is_dict(l)
+    >>> # tuple:
+    >>> t = OmegaConf.create((1, 2, 3))
+    >>> assert OmegaConf.is_config(t)
+    >>> assert OmegaConf.is_tuple(t)
+    >>> assert OmegaConf.is_sequence(t)
+    >>> assert not OmegaConf.is_list(t)
+
+
+OmegaConf.missing_keys
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``OmegaConf.missing_keys(cfg)`` returns a set of missing keys present in the input ``cfg``.
+Each missing key is represented as a ``str``, using a dotlist style.
+This utility function can be used after creating a config object, after merging sources and so on,
+to check for missing mandatory fields and aid in creating a proper error message.
+Node interpolations that dereference missing values are reported as missing keys,
+whether they are the full value or part of a string. By default, custom resolver
+interpolations are skipped when collecting missing keys. Pass
+``resolve_custom_resolvers=True`` to resolve custom resolvers and report them as
+missing if they dereference a missing value.
+
+.. doctest::
+
+    >>> missings = OmegaConf.missing_keys({
+    ...     "foo": {"bar": "???"},
+    ...     "missing": "???",
+    ...      "list": ["a", None, "???"]
+    ... })
+    >>> assert missings == {'list[2]', 'foo.bar', 'missing'}
+
+The function raises a `ValueError` on input not representing a config.
+
+
+Debugger integration
+--------------------
+
+OmegaConf provides an optional ``pydevd`` plugin via the separate
+``omegaconf-pydevd`` package, which enables a better debugging experience in
+PyCharm, VSCode and other
+`PyDev.Debugger <https://github.com/fabioz/PyDev.Debugger>`_ powered IDEs.
+
+Install it with:
+
+.. code-block:: bash
+
+    pip install omegaconf-pydevd
+
+See the `omegaconf-pydevd README <https://github.com/hydra-ecosystem/omegaconf/tree/main/subprojects/omegaconf-pydevd/README.md>`_
+for usage details and an example debugger demo.
+
+The debugger extension enables OmegaConf-aware object inspection:
+ - providing information about interpolations.
+ - properly handling missing values (``"???"``).
+ 
+The plugin comes in two flavors:
+ - USER: Default behavior, useful when debugging your OmegaConf objects.
+ - DEV: Useful when debugging OmegaConf itself, shows the exact data model of OmegaConf.
+
+The default flavor is ``USER``. You can select which flavor to use using the environment variable ``OC_PYDEVD_RESOLVER``,
+which takes the possible values ``USER``, ``DEV`` and ``DISABLE``.

@@ -1,0 +1,16 @@
+-r base.txt
+-r docs.txt
+attrs
+build
+bump-my-version
+coverage
+nox[pbs]
+pre-commit
+pyrefly==1.2.0
+pytest
+pytest-benchmark
+pytest-mock
+ruff==0.15.22
+towncrier
+twine
+pydevd

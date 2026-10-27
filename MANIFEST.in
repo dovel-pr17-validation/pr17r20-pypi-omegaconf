@@ -1,0 +1,8 @@
+include LICENSE
+include ATTRIBUTION/LICENSE-antlr4
+include requirements/base.txt
+include requirements/dev.txt
+include requirements/docs.txt
+recursive-include tests *.py *.pickle
+recursive-include build_helpers *.py *.jar
+recursive-include omegaconf *.g4
